@@ -1,6 +1,6 @@
 # Shiny Shell
 
-A web-based terminal emulator that provides a browser-accessible command-line interface.
+A web-based terminal emulator that provides a browser-accessible command-line interface. Inspired by https://github.com/colearendt/shiny-shell, vibed with Claude.
 
 ## Features
 
