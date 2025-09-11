@@ -13,7 +13,6 @@ A web-based terminal emulator that provides a browser-accessible command-line in
 
 The application creates a web interface that mimics a traditional terminal:
 
-- Commands are executed using Python's `subprocess` module
 - The current working directory is tracked and displayed in the prompt
 - Command output (both stdout and stderr) is displayed with appropriate styling
 - Success/error states are visually distinguished with different colors
@@ -27,5 +26,5 @@ Run the application and navigate to the provided URL to access your web-based sh
 
 - Built with [Shiny](https://shiny.posit.co/py/)
 - Uses jQuery for client-side interactions
-- Subprocess execution with proper timeout handling
+- Commands are executed using Python's `subprocess` module with proper timeout handling
 - Reactive state management for terminal session and command history
