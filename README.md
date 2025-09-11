@@ -35,5 +35,6 @@ Not an exhausive list, just some things I've noticed so far:
 
 - No tab completion
 - No multi-line command support
+- `!$`, `!!`, and similar bash shortcuts don't work
 - You can't open things like `vim` or `nano` that require a full terminal interface
 - Any color you like, as long as it's green on black
