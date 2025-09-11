@@ -11,23 +11,19 @@ id = '645c9e6e-3dde-4773-baa4-d38569356d34'
 dashboard_url = 'http://localhost:3939/connect/#/apps/645c9e6e-3dde-4773-baa4-d38569356d34'
 direct_url = 'http://localhost:3939/content/645c9e6e-3dde-4773-baa4-d38569356d34/'
 logs_url = 'http://localhost:3939/connect/#/apps/645c9e6e-3dde-4773-baa4-d38569356d34/logs'
-deployed_at = '2025-09-08T13:42:44-04:00'
-bundle_id = '5'
-bundle_url = 'http://localhost:3939/__api__/v1/content/645c9e6e-3dde-4773-baa4-d38569356d34/bundles/5/download'
+deployed_at = '2025-09-11T12:36:16-04:00'
+bundle_id = '8'
+bundle_url = 'http://localhost:3939/__api__/v1/content/645c9e6e-3dde-4773-baa4-d38569356d34/bundles/8/download'
 files = [
   '.posit/publish/deployments/deployment-HE4N.toml',
   '.posit/publish/shiny-shell-3JPE.toml',
+  'pyproject.toml',
   'requirements.txt',
   'shiny-shell.py'
 ]
 requirements = [
   'shiny'
 ]
-
-[deployment_error]
-code = 'deployFailed'
-message = '3.11: invalid version.'
-operation = 'publish/restorePythonEnv'
 
 [configuration]
 product_type = 'connect'
@@ -39,11 +35,13 @@ files = [
   '/shiny-shell.py',
   '/requirements.txt',
   '/.posit/publish/shiny-shell-3JPE.toml',
-  '/.posit/publish/deployments/deployment-HE4N.toml'
+  '/.posit/publish/deployments/deployment-HE4N.toml',
+  '/pyproject.toml'
 ]
 title = 'shiny-shell'
 
 [configuration.python]
-version = '3.11'
+version = '3.11.3'
 package_file = 'requirements.txt'
 package_manager = 'pip'
+requires_python = '>= 3.11'

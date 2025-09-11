@@ -10,9 +10,10 @@ files = [
   '/shiny-shell.py',
   '/requirements.txt',
   '/.posit/publish/shiny-shell-3JPE.toml',
-  '/.posit/publish/deployments/deployment-HE4N.toml'
+  '/.posit/publish/deployments/deployment-HE4N.toml',
+  '/pyproject.toml'
 ]
 title = 'shiny-shell'
 
 [python]
-version = "3.11.3"
+version = '3.11.3'

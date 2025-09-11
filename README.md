@@ -26,5 +26,14 @@ Run the application and navigate to the provided URL to access your web-based sh
 
 - Built with [Shiny](https://shiny.posit.co/py/)
 - Uses jQuery for client-side interactions
-- Commands are executed using Python's `subprocess` module with proper timeout handling
+- Commands are executed using Python's `subprocess` module
 - Reactive state management for terminal session and command history
+
+## Known Limitations
+
+Not an exhausive list, just some things I've noticed so far:
+
+- No tab completion
+- No multi-line command support
+- You can't open things like `vim` or `nano` that require a full terminal interface
+- Any color you like, as long as it's green on black
