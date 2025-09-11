@@ -68,6 +68,8 @@ app_ui = ui.page_fillable(
                 line-height: inherit !important;
                 height: auto !important;
                 min-height: 0 !important;
+                width: 100% !important;
+                flex: 1 !important;
             }
             .prompt-line {
                 color: #00ff00;
@@ -77,6 +79,11 @@ app_ui = ui.page_fillable(
                 font-family: 'Courier New', monospace;
                 font-size: 16px;
                 line-height: 1.2;
+                flex-wrap: nowrap;
+            }
+            .prompt-text {
+                white-space: nowrap;
+                flex-shrink: 0;
             }
             .error-output {
                 color: #ff6666;
@@ -322,8 +329,8 @@ def server(input, output, session):
         current_prompt = get_prompt()
         elements.append(
             ui.div(
-                ui.span(current_prompt, style="margin-right: 0.5em;"),
-                ui.input_text("command", "", placeholder="", width="auto"),
+                ui.span(current_prompt, class_="prompt-text", style="margin-right: 0.5em;"),
+                ui.input_text("command", "", placeholder="", width="100%"),
                 class_="prompt-line",
             )
         )
