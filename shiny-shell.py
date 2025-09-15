@@ -2,6 +2,9 @@ from shiny import App, reactive, render, ui
 import subprocess
 import os
 import socket
+import glob
+import shlex
+import json
 
 app_ui = ui.page_fillable(
     ui.tags.head(
@@ -98,7 +101,11 @@ app_ui = ui.page_fillable(
         """
         )
     ),
-    ui.div(ui.output_ui("terminal_display"), class_="terminal-container"),
+    ui.div(
+        ui.output_ui("terminal_display"),
+        ui.output_ui("completions_display"),
+        class_="terminal-container"
+    ),
     ui.tags.script(
         """
         $(document).ready(function() {
@@ -111,6 +118,10 @@ app_ui = ui.page_fillable(
                     e.preventDefault();
                     var cmd = $(this).val().trim();
 
+                    // Clear completions when executing command
+                    lastCompletionResult = null;
+                    completionIndex = -1;
+
                     if (cmd) {
                         // Add to local history
                         commandHistory.push(cmd);
@@ -119,6 +130,48 @@ app_ui = ui.page_fillable(
                         // Send to server with priority flag to ensure it's processed
                         Shiny.setInputValue('execute_cmd', cmd + '_' + Date.now(), {priority: 'event'});
                     }
+                } else if (e.key === 'Tab') {
+                    e.preventDefault();
+                    var cmd = $(this).val();
+                    var cursorPos = this.selectionStart;
+
+                    // Check if we can accept the first completion
+                    if (lastCompletionResult && lastCompletionResult.completions.length > 1) {
+                        // Accept the first completion
+                        var completion = lastCompletionResult.completions[0];
+
+                        // Apply the completion
+                        var newCmd = cmd.substring(0, lastCompletionResult.start_pos) + completion + cmd.substring(lastCompletionResult.end_pos);
+                        $(this).val(newCmd);
+
+                        var newCursorPos = lastCompletionResult.start_pos + completion.length;
+                        this.setSelectionRange(newCursorPos, newCursorPos);
+
+                        console.log('Accepted first completion:', completion);
+
+                        // Clear completions on backend
+                        Shiny.setInputValue('clear_completions', Date.now(), {priority: 'event'});
+
+                        // Clear frontend state
+                        lastCompletionResult = null;
+                        completionIndex = -1;
+                        return;
+                    }
+
+                    // Clear previous completions state
+                    completionIndex = -1;
+
+                    // Add timestamp to ensure uniqueness and force processing
+                    var timestamp = Date.now();
+                    console.log('Sending tab completion request:', cmd, cursorPos, timestamp);
+
+                    // Send tab completion request as encoded string
+                    var requestData = JSON.stringify({
+                        command: cmd,
+                        cursor_pos: cursorPos,
+                        timestamp: timestamp
+                    });
+                    Shiny.setInputValue('tab_complete', requestData, {priority: 'event'});
                 } else if (e.key === 'ArrowUp') {
                     e.preventDefault();
                     if (commandHistory.length > 0) {
@@ -176,6 +229,64 @@ app_ui = ui.page_fillable(
                 subtree: true
             });
 
+            // Handle tab completion response
+            Shiny.addCustomMessageHandler('completion_result', function(result) {
+                console.log('Received completion result:', result);
+
+                if (result && result.completions && result.completions.length > 0) {
+                    // Store result for cycling
+                    lastCompletionResult = result;
+
+                    var input = $('#command');
+                    var cmd = input.val();
+
+                    console.log('Processing completions for command:', cmd);
+
+                    if (result.completions.length === 1) {
+                        // Single completion - auto-complete
+                        var completion = result.completions[0];
+                        var newCmd = cmd.substring(0, result.start_pos) + completion + cmd.substring(result.end_pos);
+                        console.log('Auto-completing:', cmd, '->', newCmd);
+                        input.val(newCmd);
+
+                        // Set cursor position after completion
+                        var newCursorPos = result.start_pos + completion.length;
+                        input[0].setSelectionRange(newCursorPos, newCursorPos);
+                        input.focus();
+
+                        // Clear stored result since we auto-completed
+                        lastCompletionResult = null;
+                    } else {
+                        // Multiple completions - show common prefix if any
+                        var commonPrefix = result.common_prefix;
+                        console.log('Multiple completions:', result.completions, 'Common prefix:', commonPrefix);
+
+                        if (commonPrefix && commonPrefix.length > (result.end_pos - result.start_pos)) {
+                            var newCmd = cmd.substring(0, result.start_pos) + commonPrefix + cmd.substring(result.end_pos);
+                            console.log('Using common prefix:', cmd, '->', newCmd);
+                            input.val(newCmd);
+
+                            var newCursorPos = result.start_pos + commonPrefix.length;
+                            input[0].setSelectionRange(newCursorPos, newCursorPos);
+                            input.focus();
+                        }
+
+                        // Completions will be shown by the backend in the completions_display
+                    }
+                } else {
+                    lastCompletionResult = null;
+                }
+            });
+
+            // Track completions for cycling
+            var currentCompletions = [];
+            var completionIndex = -1;
+            var completionCommand = '';
+            var completionCursorPos = 0;
+
+            // Handle completion result and store for cycling
+            var lastCompletionResult = null;
+
             // Initial focus and setup
             setTimeout(function() {
                 scrollToBottomAndFocus();
@@ -193,6 +304,7 @@ def server(input, output, session):
     terminal_session = reactive.value([])
     command_history_list = reactive.value([])  # For up/down arrow navigation
     history_index = reactive.value(-1)
+    current_completions = reactive.value([])  # Store current tab completions
 
     # Get user and hostname for prompt
     username = os.environ.get("USER", "user")
@@ -205,6 +317,141 @@ def server(input, output, session):
         if cwd.startswith(home):
             cwd = cwd.replace(home, "~", 1)
         return f"{username}@{hostname}:{cwd}$ "
+
+    def get_tab_completions(command, cursor_pos):
+        try:
+            # Parse the command to find the word being completed
+            words = shlex.split(command[:cursor_pos])
+            if not words:
+                # Empty command, complete commands
+                return get_command_completions("")
+
+            # Check if cursor is at the end of a word or in whitespace
+            if cursor_pos > 0 and command[cursor_pos - 1].isspace():
+                # Completing a new word
+                if len(words) == 1:
+                    # Second word - likely a file/directory
+                    return get_file_completions("", current_dir.get())
+                else:
+                    # Subsequent words - file/directory completion
+                    return get_file_completions("", current_dir.get())
+            else:
+                # Completing current word
+                current_word = words[-1] if words else ""
+
+                if len(words) == 1:
+                    # First word - command completion
+                    return get_command_completions(current_word)
+                else:
+                    # File/directory completion
+                    return get_file_completions(current_word, current_dir.get())
+        except:
+            # If parsing fails, try file completion
+            return get_file_completions("", current_dir.get())
+
+    def get_command_completions(prefix):
+        # Get commands from PATH
+        commands = set()
+        path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+
+        for path_dir in path_dirs:
+            if os.path.isdir(path_dir):
+                try:
+                    for cmd in os.listdir(path_dir):
+                        cmd_path = os.path.join(path_dir, cmd)
+                        if os.path.isfile(cmd_path) and os.access(cmd_path, os.X_OK):
+                            if cmd.startswith(prefix):
+                                commands.add(cmd)
+                except (PermissionError, OSError):
+                    continue
+
+        # Add some common built-in commands
+        builtins = ["cd", "pwd", "echo", "export", "set", "unset", "history", "exit"]
+        for builtin in builtins:
+            if builtin.startswith(prefix):
+                commands.add(builtin)
+
+        return sorted(list(commands))
+
+    def get_file_completions(prefix, directory):
+        completions = []
+
+        print(f"get_file_completions: prefix='{prefix}', directory='{directory}'")  # Debug
+
+        # Handle paths with directory separators
+        if "/" in prefix:
+            dir_part = os.path.dirname(prefix)
+            file_part = os.path.basename(prefix)
+
+            print(f"Path with '/': dir_part='{dir_part}', file_part='{file_part}'")  # Debug
+
+            # Handle absolute vs relative paths
+            if prefix.startswith("/"):
+                search_dir = dir_part if dir_part else "/"
+                is_absolute = True
+            else:
+                search_dir = os.path.join(directory, dir_part) if dir_part else directory
+                is_absolute = False
+        else:
+            search_dir = directory
+            file_part = prefix
+            is_absolute = False
+            dir_part = ""
+
+        print(f"Searching in: '{search_dir}' for files starting with '{file_part}'")  # Debug
+
+        try:
+            if os.path.isdir(search_dir):
+                for item in os.listdir(search_dir):
+                    if item.startswith(file_part):
+                        item_path = os.path.join(search_dir, item)
+
+                        # Build the completion with proper path prefix
+                        if dir_part:
+                            if is_absolute:
+                                completion = os.path.join(dir_part, item)
+                            else:
+                                completion = os.path.join(dir_part, item)
+                        else:
+                            completion = item
+
+                        if os.path.isdir(item_path):
+                            completion += "/"
+
+                        completions.append(completion)
+                        print(f"Added completion: '{completion}'")  # Debug
+        except (PermissionError, OSError) as e:
+            print(f"Error accessing directory: {e}")  # Debug
+
+        return sorted(completions)
+
+    def find_completion_bounds(command, cursor_pos):
+        # Find the start and end of the word being completed
+        start = cursor_pos
+        while start > 0 and not command[start - 1].isspace():
+            start -= 1
+
+        end = cursor_pos
+        while end < len(command) and not command[end].isspace():
+            end += 1
+
+        print(f"Completion bounds for '{command}' at pos {cursor_pos}: start={start}, end={end}")
+        print(f"Word being completed: '{command[start:end]}'")
+        return start, end
+
+    def find_common_prefix(completions):
+        if not completions:
+            return ""
+
+        if len(completions) == 1:
+            return completions[0]
+
+        common = completions[0]
+        for completion in completions[1:]:
+            while common and not completion.startswith(common):
+                common = common[:-1]
+
+        return common
 
     def execute_command(cmd):
         try:
@@ -303,20 +550,102 @@ def server(input, output, session):
                 result = execute_command(cmd.strip())
                 add_to_session(prompt, cmd.strip(), result["output"], result["success"])
 
-            # Clear input
+            # Clear completions and input
+            current_completions.set([])
             ui.update_text("command", value="")
+
+    @reactive.effect
+    @reactive.event(input.tab_complete)
+    async def handle_tab_completion():
+        tab_request = input.tab_complete()
+        print(f"Tab completion received: {tab_request}")  # Debug print
+
+        if tab_request:
+            try:
+                # Parse the JSON string
+                tab_data = json.loads(tab_request)
+                command = tab_data.get("command", "")
+                cursor_pos = tab_data.get("cursor_pos", 0)
+                timestamp = tab_data.get("timestamp", 0)
+
+                print(f"Processing completion for: '{command}' at pos {cursor_pos}")  # Debug print
+
+                # Get completions
+                completions = get_tab_completions(command, cursor_pos)
+                print(f"Found completions: {completions}")  # Debug print
+
+                if completions:
+                    # Find the bounds of the word being completed
+                    start_pos, end_pos = find_completion_bounds(command, cursor_pos)
+
+                    # Calculate common prefix
+                    common_prefix = find_common_prefix(completions)
+
+                    result = {
+                        "completions": completions,
+                        "start_pos": start_pos,
+                        "end_pos": end_pos,
+                        "common_prefix": common_prefix,
+                        "timestamp": timestamp
+                    }
+
+                    print(f"Sending result: {result}")  # Debug print
+                    # Send completion result to frontend
+                    await session.send_custom_message("completion_result", result)
+
+                    # If multiple completions, store them for display
+                    if len(completions) > 1:
+                        current_completions.set(completions)
+                        print(f"Stored {len(completions)} completions for display")  # Debug print
+                else:
+                    print("No completions found")  # Debug print
+            except json.JSONDecodeError as e:
+                print(f"Failed to parse tab completion request: {e}")  # Debug print
+
+    @reactive.effect
+    @reactive.event(input.clear_completions)
+    def handle_clear_completions():
+        current_completions.set([])
+        print("Cleared completions")  # Debug print
+
+    @reactive.effect
+    @reactive.event(input.show_completions)
+    def handle_show_completions():
+        completions_text = input.show_completions()
+        print(f"Show completions received: {completions_text}")  # Debug print
+
+        if completions_text:
+            # Remove timestamp suffix
+            completions = completions_text.rsplit("_", 1)[0]
+            print(f"Displaying completions: {completions}")  # Debug print
+
+            # Add completions to terminal output
+            session_data = list(terminal_session.get())
+            session_data.append({
+                "prompt": "",
+                "command": "",
+                "output": completions,
+                "success": True
+            })
+            terminal_session.set(session_data)
+            print("Added completions to terminal session")  # Debug print
 
     @render.ui
     def terminal_display():
         session_data = terminal_session.get()
         elements = []
 
+        print(f"Rendering terminal with {len(session_data)} entries")  # Debug print
+
         # Display all previous commands and outputs
-        for entry in session_data:
+        for i, entry in enumerate(session_data):
+            print(f"Entry {i}: prompt='{entry['prompt']}', command='{entry['command']}', output='{entry['output'][:50]}...' if len > 50")  # Debug print
+
             # Show prompt + command
-            elements.append(
-                ui.div(f"{entry['prompt']}{entry['command']}", class_="terminal-output")
-            )
+            if entry['prompt'] or entry['command']:
+                elements.append(
+                    ui.div(f"{entry['prompt']}{entry['command']}", class_="terminal-output")
+                )
 
             # Show output if any
             if entry["output"]:
@@ -336,6 +665,17 @@ def server(input, output, session):
         )
 
         return ui.div(*elements)
+
+    @render.ui
+    def completions_display():
+        completions = current_completions.get()
+        if completions:
+            completions_text = "  ".join(completions)
+            return ui.div(
+                completions_text,
+                class_="terminal-output success-output"
+            )
+        return ui.div()  # Empty div when no completions
 
 
 app = App(app_ui, server)
